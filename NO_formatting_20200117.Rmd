@@ -1,0 +1,343 @@
+---
+title: "National Outreach"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(reshape2)
+library(varhandle)
+```
+
+## R Markdown
+
+
+
+```{r read file, include= FALSE}
+old_df = read_csv('/Users/angelalee/Downloads/national_outreach_for_old_clients.csv')
+
+```
+
+## head. dimension = 4238440      26
+```{r check dataframe, echo=FALSE}
+
+dim(old_df) 
+```
+## unfactor these columns
+```{r, filter by unfactor the dataframe, include = TRUE}
+
+old_df_unfactored <- unfactor(old_df)
+```
+```{r, header unfactored, include = TRUE}
+
+head(old_df_unfactored)
+```
+## filtered by attested more than once and practice name is not null
+```{r, filter by attested more than once, include = TRUE}
+
+old_attester_more_than_once <- old_df_unfactored %>% group_by(attested_pruid) %>% mutate(attested_count = n_distinct(validation_timestamp)) %>% filter(attested_count >= 1 & !is.na(practice_name)) %>% arrange(desc(validation_timestamp, attested_pruid))
+```
+
+## check dimension of attester more than once dataframe: 4195317      27
+```{r, include= TRUE}
+dim(old_attester_more_than_once)
+```
+
+## filtered by practice with only one practice name and prov_at_sl_status == 'practicing_at_office'
+```{r, include= TRUE}
+old_practice_with_one_name <- old_attester_more_than_once %>% group_by(attested_pruid) %>% mutate(count_practice_name = n_distinct(practice_name)) %>% filter(count_practice_name == 1 & prov_at_sl_status == 'practicing_at_office')
+                                                                                            
+```
+
+## check dimension again, dimension = 3033388      28
+```{r, include = TRUE}
+dim(old_practice_with_one_name)
+
+```
+
+
+## check NAs and removed them from attester first name, last name, provider first name, last name, and attester email
+
+```{r, include = TRUE}
+library(tidyr)
+
+old_practice_with_one_name_df <- old_practice_with_one_name %>% filter(!is.na(druid) & !is.na(attester_first_name) & !is.na(attester_last_name) & !is.na(first_name) & !is.na(last_name) & !is.na(attester_email) & !is.na(prov_street)
+                                                                       & !is.na(prov_state) & !is.na(prov_zip))
+
+old_practice_with_na <- sapply(old_practice_with_one_name_df, function(x) sum(is.na(x)))
+old_practice_with_na
+```
+
+## check dimension = 2933356      28
+```{r, include= FALSE}
+dim(old_practice_with_one_name_df)
+```
+
+
+
+## add a column for provider full name 
+```{r}
+old_practice_with_one_name_df$middle_name[is.na(old_practice_with_one_name_df$middle_name)] <- " "
+old_practice_with_one_name_df$doctor_name <- paste(old_practice_with_one_name_df$prov_prefix, old_practice_with_one_name_df$first_name,  old_practice_with_one_name_df$middle_name, old_practice_with_one_name_df$last_name, sep = " ")
+
+old_practice_with_one_name_df$attester_name <- paste(old_practice_with_one_name_df$attester_first_name, " ", old_practice_with_one_name_df$attester_last_name)
+old_practice_with_one_name_and_npi <- old_practice_with_one_name_df %>% replace_na(list(" "))
+```
+
+## filter out any practices with more than 2 NPIs, first name, last name, prov_prefix, middle_name (690313 records),
+total dimension = 2711580      31
+```{r filter out npi greater than 2, include= TRUE}
+old_practice_with_one_name_and_npi <- old_practice_with_one_name_and_npi %>% group_by(attested_pruid, druid) %>% 
+  mutate(count_vm_npi= n_distinct(vm_npi, doctor_name)) %>% 
+  filter(count_vm_npi == 1)
+old_practice_with_one_name_and_npi <- old_practice_with_one_name_and_npi %>% drop_na(doctor_name, attester_email)
+dim(old_practice_with_one_name_and_npi)
+```
+## check out the column
+```{r}
+head(old_practice_with_one_name_and_npi)
+old_practice_with_one_name_and_npi <- distinct(old_practice_with_one_name_and_npi)
+```
+## View the dataframe to check the doctor_name field
+```{r, include = FALSE}
+View( old_practice_with_one_name_and_npi)
+```
+## count pruids with less than 12 pruids. Note: this is due to doctor limits in Mailchimp. dim: 2054936      32
+```{r count pruids with 12 or more druids, include = TRUE}
+
+old_practice_with_one_name_and_npi_count <- old_practice_with_one_name_and_npi %>% group_by(attested_pruid) %>% select(attested_pruid, druid) %>% summarise(doctor_count = n_distinct(druid))
+
+old_practice_with_one_name_and_npi <- left_join(old_practice_with_one_name_and_npi, old_practice_with_one_name_and_npi_count, by = "attested_pruid") %>% filter(doctor_count <= 12)
+dim(old_practice_with_one_name_and_npi)
+```
+## total unique pruid:174281 , total unique druid:267743
+```{r count unique pruid/druid, include = TRUE}
+
+length(unique(old_practice_with_one_name_and_npi$attested_pruid))
+length(unique(old_practice_with_one_name_and_npi$druid))
+```
+## join with the attesters from existing clients
+## removed druid from the existing_pruid_druid 01.23
+```{r join df with existing, include = TRUE}
+
+existing_df = read_csv('./PrecisionAttestations_contacts_20200115_v2.csv')
+existing_pruid_druid = subset(existing_df, select = c('attested_pruid'))
+#existing_pruid_druid_list = existing_pruid_druid %>% separate_rows(druids)
+```
+### join existing clients dataset with the old clients
+### 01.23 changed to pruid only (overlapped pruids = 453720)
+```{r summary for new clients and join two datasets, include = TRUE}
+
+
+#length(unique(existing_pruid_druid_list$attested_pruid))
+#existing_pruid_druid_list$druid <- existing_pruid_druid_list$druids
+length(unique(existing_pruid_druid))
+#summary(existing_pruid_druid_list)
+#overlap_df <- inner_join(old_practice_with_one_name_and_npi, existing_pruid_druid_list, by = c('attested_pruid'))
+overlap_df <- inner_join(old_practice_with_one_name_and_npi, existing_pruid_druid, by = c('attested_pruid'))
+dim(overlap_df)
+```
+### 01.23 changed to pruid only
+```{r}
+overlap_df$overlap = TRUE
+head(overlap_df)
+overlap_subset = subset(overlap_df, select = c(attested_pruid, overlap))
+old_practice_with_one_name_and_npi_with_overlap = left_join(old_practice_with_one_name_and_npi,overlap_subset, by = c('attested_pruid'))
+```
+
+```{r}
+
+head(old_practice_with_one_name_and_npi_with_overlap)
+```
+## unique pruid for the old attesters 174281
+```{r}
+
+length(unique(old_practice_with_one_name_and_npi_with_overlap$attested_pruid)
+)
+```
+## most frequent emails
+```{r}
+
+old_most_frequent_emails <- old_practice_with_one_name_and_npi_with_overlap %>% group_by(attested_pruid) %>%  count(n_distinct(attester_email))
+old_most_frequent_emails
+```
+## unique pruid for the old attesters at the pruid_druid level 159925
+## unique pruid for the old attesters at the pruid level 148987
+```{r}
+
+old_practice_with_one_name_and_npi_no_overlap <- old_practice_with_one_name_and_npi_with_overlap %>% filter(is.na(overlap)) 
+length(unique(old_practice_with_one_name_and_npi_no_overlap$attested_pruid))
+```
+
+```{r}
+
+View(old_practice_with_one_name_and_npi_no_overlap)
+```
+## find the most recent attesters, dim  174281     32
+```{r most recent attesters, include = TRUE}
+old_practice_with_one_name_and_npi_recent_attestor <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>% 
+  arrange(desc(attested_pruid, validation_timestamp)) %>% filter(row_number() ==1)
+
+dim(old_practice_with_one_name_and_npi_recent_attestor)
+
+old_practice_with_one_name_and_npi_recent_attestor <- subset(old_practice_with_one_name_and_npi_recent_attestor, select = c(
+  "attested_pruid", "attester_email","attester_first_name", "attester_last_name","overlap")) %>% 
+  rename(last_attested_email = attester_email, last_attested_fname = 
+                   attester_first_name,  last_attested_lname = attester_last_name )
+```
+
+```{r}
+tail(old_practice_with_one_name_and_npi_recent_attestor)
+```
+## reformating the doctor and doctor npi columns
+
+```{r reformating doctor name, include = TRUE}
+
+
+old_doctor_name <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>% 
+         summarise(doctor_name_A = toString(unique(doctor_name))) 
+
+old_attester_name_df <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>% 
+        summarise(attester_names = toString(unique(attester_name)))
+
+```
+
+```{r}
+View(old_practice_with_one_name_and_npi)
+```
+
+### dimension =174281    2
+```{r, include = TRUE}
+old_doctor_name_split <- colsplit(old_doctor_name$doctor_name_A, ",", c(paste("doctor", as.character(seq.int(1:12)))))
+```
+
+
+```{r, include = FALSE}
+
+old_npi_list <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>% summarise(prov_npi = toString(unique(vm_npi)))
+old_npi_split <- colsplit(old_npi_list$prov_npi, ",", c(paste("doctor_npi", as.character(seq.int(1:12)))))
+```
+
+### concatenate the most attested email list
+```{r}
+old_email_list <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>%
+  summarise(attester_emails = toString(unique(attester_email)))
+dim(old_email_list)
+
+old_most_attested_email_list <- old_practice_with_one_name_and_npi_no_overlap %>%  group_by(attested_pruid, attester_email) %>% 
+  mutate(email_count = n())
+```
+
+```{r}
+old_practice_with_one_name_and_npi_attesters_df <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>% 
+  arrange(attested_pruid, validation_timestamp) %>% filter(row_number() ==1)
+
+old_practice_with_one_name_and_npi_attesters_df <- subset(old_practice_with_one_name_and_npi_attesters_df, select = c(
+  "attested_pruid", "attester_email","attester_first_name", "attester_last_name"))
+```
+
+### view email_list
+```{r}
+View(attester_name_df)
+```
+
+## find the most frequent attester emails, dim  52862  x  27
+```{r}
+practice_with_one_name_and_npi_frequent_attestor <- practice_with_one_name_and_npi %>% group_by(attested_pruid) %>%   add_count(attester_email, sort = TRUE, name = "email_frequency") %>% filter(row_number() ==1)
+
+dim(practice_with_one_name_and_npi_frequent_attestor)
+
+practice_with_one_name_and_npi_recent_attestor <- subset(practice_with_one_name_and_npi_frequent_attestor, select = c(
+  "attested_pruid", "attester_email","attester_first_name", "attester_last_name")) %>% 
+  rename(most_frequent_attested_email = attester_email, most_frequent_attested_fname = 
+                  attester_first_name,  most_frequent_attested_lname = attester_last_name )
+```
+### concatenate the specialty
+```{r}
+old_specialty_list <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>%
+  summarise(provider_specialties = toString(unique(specialty)))
+dim(old_specialty_list)
+```
+### concatenate the doctor list
+```{r, include = TRUE}
+old_doctor_list <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>%
+  summarise(druids = toString(unique(druid)))
+
+```
+### concatenate the address list
+```{r}
+old_address_list <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>%
+  summarise(prac_address = toString(unique(practice_address)))
+
+
+```
+
+```{r}
+View(old_address_list_unique)
+```
+
+```{r}
+old_address_list_unique <- old_practice_with_one_name_and_npi_no_overlap %>% group_by(attested_pruid) %>%
+  slice(1)
+
+head(old_address_list_unique)
+dim(old_address_list_unique)
+
+old_address_list_unique <- subset(old_address_list_unique, select = c(attested_pruid, practice_address))
+```
+
+### merge all data together
+```{r merge, include= TRUE}
+
+merge_data <- left_join(old_doctor_list, old_practice_with_one_name_and_npi_recent_attestor, by = 'attested_pruid' )
+merged_data_specialty <- left_join(merge_data, old_specialty_list, by = 'attested_pruid')
+merge_data_attester_names <- left_join(merged_data_specialty,old_practice_with_one_name_and_npi_attesters_df, by = 'attested_pruid')
+merge_data_mutiple_emails <- left_join(merge_data_attester_names, old_email_list, by = 'attested_pruid')
+merge_data_address <- left_join(merge_data_mutiple_emails, old_address_list, by = 'attested_pruid')
+merge_data_address_attester_name<- left_join(merge_data_address, old_attester_name_df, by = 'attested_pruid')
+merge_data_address_attester_name_address <- left_join(merge_data_address_attester_name,old_address_list_unique, by = 'attested_pruid')
+merge_email_doctor_name <- cbind(merge_data_address_attester_name_address, old_doctor_name_split)
+merge_email_doctor_name_npi <- cbind(merge_email_doctor_name, old_npi_split)
+```
+
+```{r concatenate, include = FALSE}
+
+old_attested_data <- subset(merge_email_doctor_name_npi, select = c("attested_pruid", "druids", "provider_specialties", "last_attested_email", "last_attested_fname", "last_attested_lname","attester_emails", "attester_first_name", "attester_last_name", "prac_address", "practice_address", "doctor 1", "doctor_npi 1", "doctor 2", "doctor_npi 2", "doctor 3", "doctor_npi 3", "doctor 4", "doctor_npi 4",
+       "doctor 5", "doctor_npi 5", "doctor 6", "doctor_npi 6", "doctor 7", "doctor_npi 7", "doctor 8", "doctor_npi 8",
+       "doctor 9", "doctor_npi 9", "doctor 10", "doctor_npi 10", "doctor 11", "doctor_npi 11", "doctor 12", "doctor_npi 12", "overlap"))
+
+old_attested_data$attester_emails <- gsub(",","|", old_attested_data$attester_emails )
+old_attested_data$druids <- gsub(",", "|", old_attested_data$druids )
+```
+
+### view attested dataframe
+```{r}
+head(old_attested_data)
+```
+### drop NAs
+```{r}
+old_attested_data_5 <- old_attested_data %>% filter(!is.na(last_attested_email))
+dim(old_attested_data_5)
+```
+
+```{r}
+length(unique(old_attested_data_5$attested_pruid))
+```
+
+```{r}
+View(old_attested_data_2)
+```
+
+
+
+
+```{r}
+write_csv(old_attested_data_5, path = './PrecisionAttestations_old_clients_exclude_existing_clients_20200122.csv')
+```
+
+```{r}
+write_csv(old_practice_with_one_name_and_npi_no_overlap, './national_outreach_for_etl_20200118.csv')
+```
